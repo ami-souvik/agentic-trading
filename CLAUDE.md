@@ -274,33 +274,222 @@ def fetch_nifty50_index(days: int = 30) -> pd.DataFrame:
 
 ### 4.2 `ingestion/news.py`
 
+Feed selection: 18 feeds chosen from 200+ available. Moneycontrol removed RSS in 2024 — skip.
+Each feed tagged with consuming agents and priority. Verify live URLs on first deployment.
+
 ```python
-RSS_FEEDS = {
-    "nse_announcements": "https://nseindia.com/static/rss-feed/corp_ann.xml",
-    "moneycontrol":      "https://www.moneycontrol.com/rss/marketreports.xml",
-    "et_markets":        "https://economictimes.indiatimes.com/markets/rss.cms",
-    "livemint":          "https://www.livemint.com/rss/markets",
-    "business_standard": "https://www.business-standard.com/rss/markets-106.rss",
+from dataclasses import dataclass, field
+
+@dataclass
+class FeedConfig:
+    url: str
+    agents: list[str]          # which agents consume this feed
+    priority: str              # CRITICAL | HIGH | MEDIUM
+    note: str                  # why this feed matters
+
+# ── NSE Official Feeds (6) — always parse first; highest authority ────────────
+# Base URL pattern: https://nseindia.com/static/rss-feed/{slug}.xml
+# Verify slug at https://www.nseindia.com/static/rss-feed before first deploy.
+
+NSE_FEEDS: dict[str, FeedConfig] = {
+    "nse_financial_results": FeedConfig(
+        url="https://nsearchives.nseindia.com/content/RSS/Financial_Results.xml",
+        agents=["news_sentiment", "fundamentals"],
+        priority="CRITICAL",
+        note="Quarterly results beat/miss — single highest-signal event per stock.",
+    ),
+    "nse_board_meetings": FeedConfig(
+        url="https://nsearchives.nseindia.com/content/RSS/Board_Meetings.xml",
+        agents=["news_sentiment", "fundamentals"],
+        priority="CRITICAL",
+        note="Upcoming results dates, dividend decisions, capex announcements.",
+    ),
+    "nse_corporate_actions": FeedConfig(
+        url="https://nsearchives.nseindia.com/content/RSS/Corporate_action.xml",
+        agents=["technical", "fundamentals"],
+        priority="CRITICAL",
+        note="Dividends/splits/rights — cause price discontinuities; adjust OHLC.",
+    ),
+    "nse_announcements": FeedConfig(
+        url="https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+        agents=["news_sentiment"],
+        priority="HIGH",
+        note="Catch-all regulatory filings, investor presentations, press releases.",
+    ),
+    "nse_insider_trading": FeedConfig(
+        url="https://nsearchives.nseindia.com/content/RSS/InsiderTrading.xml",
+        agents=["fundamentals", "portfolio_manager"],
+        priority="HIGH",
+        note="Promoter/director BUYs = strongly bullish; SELLs are ambiguous.",
+    ),
+    "nse_shareholding_pattern": FeedConfig(
+        url="https://nsearchives.nseindia.com/content/RSS/Shareholding_Pattern.xml",
+        agents=["fundamentals"],
+        priority="MEDIUM",
+        note="Quarterly FII/DII/promoter holding changes — institutional conviction signal.",
+    ),
+}
+# NSE feeds to SKIP (add to blocklist, don't subscribe):
+# Regulation 29/31, Secretarial Compliance, Share Transfers, Statement of Deviation,
+# Unitholding Patterns, Voting Results, BRSR, Annual Reports, Investor Complaints,
+# Related Party Transactions, Issuer Offer Docs, Reason for Encumbrance,
+# Daily Buy Back/Redemption, NSE Circulars.
+
+# ── Economic Times Feeds (6) — primary text news source ──────────────────────
+ET_FEEDS: dict[str, FeedConfig] = {
+    "et_markets": FeedConfig(
+        url="https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+        agents=["news_sentiment", "portfolio_manager"],
+        priority="CRITICAL",
+        note="Primary ET text feed — broadest Indian equity coverage. Filter by ticker in code.",
+    ),
+    "et_stocks": FeedConfig(
+        url="https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
+        agents=["news_sentiment"],
+        priority="HIGH",
+        note="Analyst upgrades/downgrades, block deals, bulk deals.",
+    ),
+    "et_company": FeedConfig(
+        url="https://economictimes.indiatimes.com/news/company/rssfeeds/2143429.cms",
+        agents=["news_sentiment", "fundamentals"],
+        priority="HIGH",
+        note="M&A, management changes, litigation — company-level material events.",
+    ),
+    "et_industry_banking": FeedConfig(
+        url="https://economictimes.indiatimes.com/industry/banking/finance/rssfeeds/13358259.cms",
+        agents=["fundamentals"],
+        priority="HIGH",
+        note="RBI/NPA/credit growth for HDFCBANK, ICICIBANK, AXISBANK, KOTAKBANK, BAJFINANCE.",
+    ),
+    "et_industry_energy": FeedConfig(
+        url="https://economictimes.indiatimes.com/industry/energy/rssfeeds/13358350.cms",
+        agents=["fundamentals"],
+        priority="HIGH",
+        note="Crude prices, refinery margins, new energy policy — for RELIANCE, ADANIENT.",
+    ),
+    "et_economy": FeedConfig(
+        url="https://economictimes.indiatimes.com/news/economy/rssfeeds/1373380680.cms",
+        agents=["fundamentals", "portfolio_manager"],
+        priority="HIGH",
+        note="RBI policy, GDP, inflation, fiscal data — macro context for PM final decision.",
+    ),
+}
+# ET feeds to SKIP: ETPrime (paywall teaser only), Astrology/Panchang/Chalisa/Tarot,
+# MF/SME/NRI/Careers/Magazines/Podcasts, all ET Now video feeds (titles only),
+# Options/Crypto/US Stocks/Digital Real Estate, Wealth/P2P, Auto/Healthcare/Media
+# (not in 15-stock universe), Investment Ideas/Market Mood/Stock Recos (secondary signal).
+
+# ── Livemint Feeds (2) — independent second source; dedup against ET ─────────
+LIVEMINT_FEEDS: dict[str, FeedConfig] = {
+    "livemint_markets": FeedConfig(
+        url="https://www.livemint.com/rss/markets",
+        agents=["news_sentiment"],
+        priority="HIGH",
+        note="Second independent text source. Cosine-dedup against ET before passing to agents.",
+    ),
+    "livemint_companies": FeedConfig(
+        url="https://www.livemint.com/rss/companies",
+        agents=["news_sentiment", "fundamentals"],
+        priority="HIGH",
+        note="Often breaks Reliance/TCS/HDFC Bank company stories before ET.",
+    ),
+}
+# Livemint feeds to SKIP: Budget, Elections, Education, Sports, AI (generic),
+# Insurance, Opinion, Money (personal finance), Science, Technology (generic),
+# Videos (titles only), Politics, Industry (covered by ET sector feeds).
+
+# ── Business Standard Feeds (4) — institutional angle; strong SEBI/RBI coverage
+# URL pattern: https://www.business-standard.com/rss/{section}-{id}.rss
+# Section IDs confirmed active May 2026. Verify at business-standard.com/rss.
+BS_FEEDS: dict[str, FeedConfig] = {
+    "bs_stock_market": FeedConfig(
+        url="https://www.business-standard.com/rss/markets-106.rss",
+        agents=["news_sentiment"],
+        priority="HIGH",
+        note="Strong institutional angle — block deals, FII activity, analyst calls.",
+    ),
+    "bs_quarterly_results": FeedConfig(
+        url="https://www.business-standard.com/rss/companies-101.rss",
+        agents=["news_sentiment", "fundamentals"],
+        priority="HIGH",
+        note="Results analysis + management commentary — supplements NSE Financial Results.",
+    ),
+    "bs_finance": FeedConfig(
+        url="https://www.business-standard.com/rss/finance-105.rss",
+        agents=["fundamentals"],
+        priority="MEDIUM",
+        note="SEBI orders, RBI circulars — directly affects 6 banking/NBFC stocks.",
+    ),
+    "bs_economy": FeedConfig(
+        url="https://www.business-standard.com/rss/economy-policy-102.rss",
+        agents=["fundamentals", "portfolio_manager"],
+        priority="MEDIUM",
+        note="Policy, budget impact, GST — macro signals that move Nifty basket.",
+    ),
+}
+# BS feeds to SKIP: All 23 election feeds, Cricket/IPL/Sports, Immigration,
+# Luxury/Lifestyle, Entertainment, Blueprint Defence, Auto Expo, BS at 50,
+# Gold/Silver Rate Today, Opinion (editorial noise), PR/ANI feeds, Shows.
+
+# ── Moneycontrol — SKIP ENTIRELY ─────────────────────────────────────────────
+# Removed RSS feeds in late 2024. Scraping violates ToS and breaks on JS rendering.
+# ET + Livemint + BS covers identical content. Do not add any Moneycontrol URLs.
+
+# ── Master feed registry (18 feeds total) ────────────────────────────────────
+ALL_FEEDS: dict[str, FeedConfig] = {
+    **NSE_FEEDS,        # 6 feeds
+    **ET_FEEDS,         # 6 feeds
+    **LIVEMINT_FEEDS,   # 2 feeds
+    **BS_FEEDS,         # 4 feeds
 }
 
-def fetch_news_for_ticker(ticker: str, hours_back: int = 24) -> list[dict]:
+# ── Feed-to-agent routing ────────────────────────────────────────────────────
+def get_feeds_for_agent(agent_name: str) -> dict[str, FeedConfig]:
+    """Returns only the feeds relevant to a specific agent."""
+    return {k: v for k, v in ALL_FEEDS.items() if agent_name in v.agents}
+
+# Routing summary (for documentation):
+# news_sentiment agent:   et_markets, et_stocks, et_company, livemint_markets,
+#                         livemint_companies, bs_stock_market, bs_quarterly_results,
+#                         nse_announcements   → 8 feeds
+# fundamentals agent:     nse_financial_results, nse_board_meetings, nse_corporate_actions,
+#                         nse_insider_trading, nse_shareholding_pattern,
+#                         et_company, et_industry_banking, et_industry_energy, et_economy,
+#                         bs_quarterly_results, bs_finance, bs_economy,
+#                         livemint_companies  → 13 feeds
+# technical agent:        nse_corporate_actions (for price adjustment only)  → 1 feed
+# portfolio_manager:      et_markets, et_economy, bs_economy, nse_insider_trading  → 4 feeds
+
+def fetch_news_for_ticker(
+    ticker: str,
+    company_name: str,
+    agent_name: str,
+    hours_back: int = 24
+) -> list[dict]:
     """
-    1. Pull all RSS feeds above
-    2. Filter articles mentioning the ticker symbol OR company name
-    3. Deduplicate via dedup.py (cosine similarity > 0.85 → drop duplicate)
-    4. Sort by published_at DESC
-    5. Return top 8 articles as list of {title, url, source, published_at, summary}
-    IMPORTANT: Never store full article body. Headline + URL + 2-sentence summary only.
-    Cache per ticker in Redis with TTL=1h.
+    1. Pull only feeds assigned to agent_name (get_feeds_for_agent)
+    2. Filter articles mentioning ticker symbol OR company_name (case-insensitive)
+    3. Skip articles older than hours_back
+    4. Deduplicate via dedup.py (cosine similarity > 0.85 → drop duplicate)
+    5. Sort by published_at DESC
+    6. Return top 8 articles as list of:
+       {title, url, source, published_at, summary, feed_key, agent_tags}
+    IMPORTANT: Store headline + URL + max 2-sentence summary only.
+    Never store full article body (copyright + token cost).
+    Cache per (ticker, agent_name) in Redis with TTL=1h.
     """
 
 def get_news_window_tag(published_at: datetime) -> str:
     """
-    Maps Kirtac & Germano (2024) execution timing rules to IST:
-    - Before 09:00 IST  → "PRE_OPEN"   (trade at today's open)
-    - 09:00–15:30 IST   → "INTRADAY"   (trade at today's close, exit tomorrow close)
-    - After 15:30 IST   → "AFTER_CLOSE" (trade at tomorrow's open)
+    Implements Kirtac & Germano (2024) execution timing rules mapped to IST.
+    NSE market hours: pre-open 09:00–09:15; session 09:15–15:30.
+
+    - Before 09:00 IST  → "PRE_OPEN"    (news settled; trade at today's open 09:15)
+    - 09:00–15:30 IST   → "INTRADAY"    (during session; trade at today's close, exit tomorrow close)
+    - After 15:30 IST   → "AFTER_CLOSE" (post-market; trade at tomorrow's open 09:15)
+
     Returns: "PRE_OPEN" | "INTRADAY" | "AFTER_CLOSE"
+    All datetimes must be IST-aware (Asia/Kolkata).
     """
 ```
 
@@ -1078,8 +1267,9 @@ services:
 FROM python:3.12-slim
 WORKDIR /app
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+RUN mkdir trader && touch trader/__init__.py && pip install --no-cache-dir .
 COPY trader/ ./trader/
+RUN pip install --no-cache-dir --no-deps .
 CMD ["python", "-m", "trader.daily_run"]
 ```
 
@@ -1087,8 +1277,8 @@ CMD ["python", "-m", "trader.daily_run"]
 
 ```toml
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "nse-llm-trader"
@@ -1097,7 +1287,7 @@ description = "Multi-agent LLM paper-trading system for Indian equities (NSE)"
 requires-python = ">=3.12"
 dependencies = [
     # Data
-    "jugaad-data>=2.4.0",
+    "jugaad-data>=0.24.0",
     "nselib>=0.0.5",
     "yfinance>=0.2.40",
     "pandas>=2.2.0",

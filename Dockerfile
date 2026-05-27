@@ -7,9 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+RUN mkdir trader && touch trader/__init__.py && pip install --no-cache-dir .
 
 COPY trader/ ./trader/
+RUN pip install --no-cache-dir --no-deps .
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

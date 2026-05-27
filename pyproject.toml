@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "nse-llm-trader"
@@ -9,7 +9,7 @@ description = "Multi-agent LLM paper-trading system for Indian equities (NSE)"
 requires-python = ">=3.12"
 dependencies = [
     # Data
-    "jugaad-data>=2.4.0",
+    "jugaad-data>=0.24.0",
     "nselib>=0.0.5",
     "yfinance>=0.2.40",
     "pandas>=2.2.0",
