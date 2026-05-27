@@ -1,0 +1,11 @@
+aws_region          = "ap-south-1"
+project_name        = "nse-llm-trader"
+environment         = "dev"
+alert_email         = "dsouvik141@gmail.com"
+dynamo_table_name   = "nse_trader"
+s3_bucket_name      = "nse-llm-trader-archive"
+ecr_image_tag       = "latest"
+ecs_cpu             = 1024
+ecs_memory          = 2048
+cloudwatch_log_retention_days = 30
+s3_archive_retention_days     = 90
