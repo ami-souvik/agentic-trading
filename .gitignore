@@ -74,3 +74,9 @@ logs/
 *.csv
 *.parquet
 data/
+
+# model_cost — auto-generated pricing cache (refreshed at runtime from LiteLLM)
+trader/model_cost/_pricing_cache.json
+
+# Scratch / throwaway files
+dummy.py
