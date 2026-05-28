@@ -373,12 +373,13 @@ class TestFiiDiiFlows:
     def test_fallback_returns_valid_structure(self):
         """When all sources fail, fetch_fii_dii_flows returns a valid dict with zero values."""
         from trader.ingestion.fii_dii import fetch_fii_dii_flows
+        from trader.ingestion.cache import Cache
         from datetime import date
 
         with patch("trader.ingestion.fii_dii._try_nselib", return_value=None), \
              patch("trader.ingestion.fii_dii._try_nse_direct", return_value=None), \
-             patch("trader.ingestion.fii_dii._cache_get", return_value=None), \
-             patch("trader.ingestion.fii_dii._cache_set"):
+             patch.object(Cache, "_get", return_value=None), \
+             patch.object(Cache, "_set"):
             result = fetch_fii_dii_flows(date(2026, 5, 26))
 
         assert "fii_net_buy_cr" in result
@@ -391,11 +392,12 @@ class TestFiiDiiFlows:
     def test_cache_hit_returns_cached(self):
         """Cached value is returned without hitting any API."""
         from trader.ingestion.fii_dii import fetch_fii_dii_flows
+        from trader.ingestion.cache import Cache
         from datetime import date
 
         cached = {"fii_net_buy_cr": 450.0, "dii_net_buy_cr": -120.0, "date": "2026-05-26", "source": "nse_api"}
 
-        with patch("trader.ingestion.fii_dii._cache_get", return_value=cached) as mock_cache, \
+        with patch.object(Cache, "_get", return_value=cached), \
              patch("trader.ingestion.fii_dii._try_nselib") as mock_nselib:
             result = fetch_fii_dii_flows(date(2026, 5, 26))
 
@@ -404,12 +406,13 @@ class TestFiiDiiFlows:
 
     def test_nselib_result_used_when_available(self):
         from trader.ingestion.fii_dii import fetch_fii_dii_flows
+        from trader.ingestion.cache import Cache
         from datetime import date
 
         nselib_result = {"fii_net_buy_cr": 300.0, "dii_net_buy_cr": 50.0, "date": "2026-05-26", "source": "nselib"}
 
-        with patch("trader.ingestion.fii_dii._cache_get", return_value=None), \
-             patch("trader.ingestion.fii_dii._cache_set"), \
+        with patch.object(Cache, "_get", return_value=None), \
+             patch.object(Cache, "_set"), \
              patch("trader.ingestion.fii_dii._try_nselib", return_value=nselib_result) as mock_ns, \
              patch("trader.ingestion.fii_dii._try_nse_direct") as mock_nse:
             result = fetch_fii_dii_flows(date(2026, 5, 26))
@@ -435,8 +438,9 @@ class TestMarketDataSmoke:
         base = date(2026, 1, 2)
         yf_df.index = pd.to_datetime([base + timedelta(days=i) for i in range(len(yf_df))])
 
-        with patch("trader.ingestion.market_data._cache_get", return_value=None), \
-             patch("trader.ingestion.market_data._cache_set"), \
+        from trader.ingestion.cache import Cache
+        with patch.object(Cache, "_get", return_value=None), \
+             patch.object(Cache, "_set"), \
              patch("yfinance.download", return_value=yf_df):
             result = fetch_eod_ohlcv("RELIANCE", days=30)
 

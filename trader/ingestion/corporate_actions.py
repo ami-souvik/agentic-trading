@@ -9,46 +9,16 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, timedelta
+from .cache import Cache
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL = 6 * 3600  # 6 hours — corporate calendars update infrequently
+C = Cache(_CACHE_TTL)
 
 _NSE_CORP_ACTIONS_URL = "https://www.nseindia.com/api/corporates-corporateActions"
-
-
-def _redis():
-    try:
-        import redis as redis_lib
-        from trader.config.settings import get_settings
-        client = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
-        client.ping()
-        return client
-    except Exception:
-        return None
-
-
-def _cache_get(key: str) -> list | None:
-    r = _redis()
-    if r is None:
-        return None
-    try:
-        raw = r.get(key)
-        return json.loads(raw) if raw else None
-    except Exception:
-        return None
-
-
-def _cache_set(key: str, value: list) -> None:
-    r = _redis()
-    if r is None:
-        return
-    try:
-        r.setex(key, _CACHE_TTL, json.dumps(value, default=str))
-    except Exception:
-        pass
 
 
 def fetch_corporate_actions(ticker: str, days_window: int = 7) -> list[dict]:
@@ -59,7 +29,7 @@ def fetch_corporate_actions(ticker: str, days_window: int = 7) -> list[dict]:
     Returns empty list on failure — agents treat this as no known catalyst.
     """
     cache_key = f"corp_actions:{ticker}:{days_window}"
-    cached = _cache_get(cache_key)
+    cached = C._get(cache_key)
     if cached is not None:
         return cached
 
@@ -97,7 +67,7 @@ def fetch_corporate_actions(ticker: str, days_window: int = 7) -> list[dict]:
             "ex_date":  str(row.get("exDate", "")).strip(),
         })
 
-    _cache_set(cache_key, actions)
+    C._set(cache_key, actions)
     if actions:
         logger.info("Found %d corporate actions for %s", len(actions), ticker)
     return actions

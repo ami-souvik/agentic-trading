@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import io
 import logging
-import pickle
 from datetime import date, datetime, timedelta
-from typing import Any
+from .cache import Cache
 
 import pandas as pd
 import yfinance as yf
@@ -26,41 +25,8 @@ logger = logging.getLogger(__name__)
 IST = ZoneInfo("Asia/Kolkata")
 _REDIS_OHLCV_TTL = 23 * 3600  # 23 hours
 _REDIS_INDEX_TTL = 23 * 3600
-
-
-# ─── Redis helpers ────────────────────────────────────────────────────────────
-
-def _redis():
-    """Return a Redis client or None if unavailable."""
-    try:
-        import redis as redis_lib
-        settings = get_settings()
-        client = redis_lib.from_url(settings.redis_url, decode_responses=False)
-        client.ping()
-        return client
-    except Exception:
-        return None
-
-
-def _cache_get(key: str) -> Any | None:
-    r = _redis()
-    if r is None:
-        return None
-    try:
-        raw = r.get(key)
-        return pickle.loads(raw) if raw is not None else None
-    except Exception:
-        return None
-
-
-def _cache_set(key: str, value: Any, ttl: int) -> None:
-    r = _redis()
-    if r is None:
-        return
-    try:
-        r.setex(key, ttl, pickle.dumps(value))
-    except Exception:
-        pass
+C_OHLCV = Cache(_REDIS_OHLCV_TTL)
+C_INDEX = Cache(_REDIS_INDEX_TTL)
 
 
 # ─── OHLCV ────────────────────────────────────────────────────────────────────
@@ -74,7 +40,7 @@ def fetch_eod_ohlcv(ticker: str, days: int = 30) -> pd.DataFrame:
     - Returns exactly up to `days` most recent trading sessions (may be fewer during holidays).
     """
     cache_key = f"eod_ohlcv:{ticker}:{days}"
-    cached = _cache_get(cache_key)
+    cached = C_OHLCV._get(cache_key)
     if cached is not None:
         logger.debug("Cache hit: %s", cache_key)
         return cached
@@ -115,7 +81,7 @@ def fetch_eod_ohlcv(ticker: str, days: int = 30) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"]).dt.date
     df = df.dropna(subset=["close"]).tail(days).reset_index(drop=True)
 
-    _cache_set(cache_key, df, _REDIS_OHLCV_TTL)
+    C_OHLCV._set(cache_key, df)
     logger.info("Fetched %d sessions for %s via yfinance", len(df), ticker)
     return df
 
@@ -300,7 +266,7 @@ def fetch_nifty50_index(days: int = 30) -> pd.DataFrame:
     Used as the primary benchmark. Cached 23h in Redis.
     """
     cache_key = f"nifty50_index:{days}"
-    cached = _cache_get(cache_key)
+    cached = C_INDEX._get(cache_key)
     if cached is not None:
         return cached
 
@@ -332,5 +298,5 @@ def fetch_nifty50_index(days: int = 30) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"]).dt.date
     df = df.dropna(subset=["close"]).tail(days).reset_index(drop=True)
 
-    _cache_set(cache_key, df, _REDIS_INDEX_TTL)
+    C_INDEX._set(cache_key, df)
     return df

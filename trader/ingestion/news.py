@@ -10,13 +10,13 @@ Results cached per (ticker, agent_name) in Redis with 1h TTL.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
+from .cache import Cache
 
 import feedparser
 
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
 _NEWS_CACHE_TTL = 3600  # 1 hour
+C = Cache(ttl=_NEWS_CACHE_TTL)
 
 NewsWindowTag = Literal["PRE_OPEN", "INTRADAY", "AFTER_CLOSE"]
 
@@ -210,40 +211,6 @@ _TICKER_ALIASES: dict[str, list[str]] = {
 }
 
 
-# ─── Redis helpers ─────────────────────────────────────────────────────────────
-
-def _redis():
-    try:
-        import redis as redis_lib
-        from trader.config.settings import get_settings
-        client = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
-        client.ping()
-        return client
-    except Exception:
-        return None
-
-
-def _cache_get_json(key: str) -> list | None:
-    r = _redis()
-    if r is None:
-        return None
-    try:
-        raw = r.get(key)
-        return json.loads(raw) if raw else None
-    except Exception:
-        return None
-
-
-def _cache_set_json(key: str, value: list, ttl: int = _NEWS_CACHE_TTL) -> None:
-    r = _redis()
-    if r is None:
-        return
-    try:
-        r.setex(key, ttl, json.dumps(value, default=str))
-    except Exception:
-        pass
-
-
 # ─── Parsing helpers ───────────────────────────────────────────────────────────
 
 def _parse_published(entry: dict) -> datetime | None:
@@ -338,7 +305,7 @@ def fetch_news_for_ticker(
     Cached per (ticker, agent_name) in Redis with 1h TTL.
     """
     cache_key = f"news:{ticker}:{agent_name}:{hours_back}"
-    cached = _cache_get_json(cache_key)
+    cached = C._get(cache_key)
     if cached is not None:
         logger.debug("News cache hit: %s", cache_key)
         return cached
@@ -368,7 +335,7 @@ def fetch_news_for_ticker(
         {**a, "published_at": a["published_at"].isoformat()}
         for a in result
     ]
-    _cache_set_json(cache_key, serialisable)
+    C._set(cache_key, serialisable)
     logger.info(
         "News for %s [agent=%s]: %d articles from %d feeds (last %dh)",
         ticker, agent_name, len(result), len(agent_feeds), hours_back,

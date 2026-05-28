@@ -7,13 +7,14 @@ the Portfolio Manager agent will note the data_staleness context accordingly.
 """
 from __future__ import annotations
 
-import json
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
+from .cache import Cache
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL = 23 * 3600  # 23 hours — same day re-use
+C = Cache(_CACHE_TTL)
 
 _EMPTY_FLOWS = {
     "fii_net_buy_cr": 0.0,
@@ -21,38 +22,6 @@ _EMPTY_FLOWS = {
     "date": "",
     "source": "unavailable",
 }
-
-
-def _redis():
-    try:
-        import redis as redis_lib
-        from trader.config.settings import get_settings
-        client = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
-        client.ping()
-        return client
-    except Exception:
-        return None
-
-
-def _cache_get(key: str) -> dict | None:
-    r = _redis()
-    if r is None:
-        return None
-    try:
-        raw = r.get(key)
-        return json.loads(raw) if raw else None
-    except Exception:
-        return None
-
-
-def _cache_set(key: str, value: dict) -> None:
-    r = _redis()
-    if r is None:
-        return
-    try:
-        r.setex(key, _CACHE_TTL, json.dumps(value, default=str))
-    except Exception:
-        pass
 
 
 def _try_nselib(trade_date: date) -> dict | None:
@@ -158,7 +127,7 @@ def fetch_fii_dii_flows(trade_date: date) -> dict:
     Falls back to zeros if all sources fail — the caller should lower confidence.
     """
     cache_key = f"fii_dii:{trade_date.isoformat()}"
-    cached = _cache_get(cache_key)
+    cached = C._get(cache_key)
     if cached is not None:
         logger.debug("FII/DII cache hit for %s", trade_date)
         return cached
@@ -170,7 +139,7 @@ def fetch_fii_dii_flows(trade_date: date) -> dict:
         logger.warning("All FII/DII sources failed for %s; using zero placeholder", trade_date)
         result = {**_EMPTY_FLOWS, "date": trade_date.isoformat()}
 
-    _cache_set(cache_key, result)
+    C._set(cache_key, result)
     logger.info("FII/DII for %s: FII ₹%.0f cr, DII ₹%.0f cr (source: %s)",
                 trade_date, result["fii_net_buy_cr"], result["dii_net_buy_cr"], result["source"])
     return result
