@@ -13,7 +13,7 @@ services:
       # Bind-mount so logs written inside the container appear on the host at ./logs/
       # Tail them with: tail -f logs/trader.log
       - ./logs:/app/logs
-    command: uvicorn trader.daily_run:main --reload --host 0.0.0.0 --port 8000
+    command: uvicorn trader.main:app --reload --host 0.0.0.0 --port 8000
     depends_on:
       redis:
         condition: service_started
@@ -102,6 +102,20 @@ services:
     depends_on:
       dynamodb-local:
         condition: service_healthy
+
+  # ── Next.js Dashboard ───────────────────────────────────────────────────────
+  # Browse the dashboard at http://localhost:3000
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_KEY: ${API_KEY:-changeme-local-dev}
+    depends_on:
+      - trader-api
 
 volumes:
   redis_data:

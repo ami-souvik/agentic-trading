@@ -240,13 +240,34 @@ def _extract_summary(entry: dict) -> str:
     return " ".join(sentences[:2])[:500]
 
 
+
+# NSE blocks feedparser's default "python-feedparser/..." User-Agent with a TCP reset.
+# Using a realistic browser UA gets us through their CDN.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+_NSE_UA = _BROWSER_UA  # alias for clarity
+
+
 def _fetch_feed_entries(feed_key: str, cfg: FeedConfig) -> list[dict]:
-    """Fetch and parse one RSS feed. Returns raw article dicts with feed metadata."""
+    """Fetch and parse one RSS feed. Returns raw article dicts with feed metadata.
+
+    NSE feeds require a browser-like User-Agent; all others use feedparser's default.
+    On any error (connection reset, SSL, timeout, bad XML) returns [] and logs a warning.
+    """
     try:
-        feed = feedparser.parse(cfg.url)
+        ua = _NSE_UA if feed_key.startswith("nse_") else None
+        feed = feedparser.parse(cfg.url, agent=ua) if ua else feedparser.parse(cfg.url)
     except Exception as e:
         logger.warning("RSS fetch failed [%s]: %s", feed_key, e)
         return []
+
+    if feed.bozo and feed.bozo_exception:
+        # bozo=True means the feed was malformed XML but feedparser still parsed what it could.
+        # Log at DEBUG — don't warn, because many real feeds have minor XML issues.
+        logger.debug("Bozo feed [%s]: %s", feed_key, feed.bozo_exception)
 
     articles = []
     for entry in feed.entries:
