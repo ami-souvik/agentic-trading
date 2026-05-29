@@ -30,7 +30,11 @@ logger = logging.getLogger(__name__)
 
 def _get_table(table_name: str):
     settings = get_settings()
-    dynamodb = boto3.resource("dynamodb", region_name=settings.aws_region)
+    kwargs: dict[str, Any] = {"region_name": settings.aws_region}
+    if settings.dynamo_endpoint_url:
+        # Local dev: point to DynamoDB Local instead of real AWS
+        kwargs["endpoint_url"] = settings.dynamo_endpoint_url
+    dynamodb = boto3.resource("dynamodb", **kwargs)
     return dynamodb.Table(table_name)
 
 

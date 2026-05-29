@@ -63,9 +63,9 @@ htmlcov/
 .coverage
 coverage.xml
 
-# Logs
-*.log
-logs/
+# Logs — keep the directory in git (bind-mount needs it to exist), ignore the files
+logs/*.log
+logs/*.log.*
 
 # Jupyter
 .ipynb_checkpoints/

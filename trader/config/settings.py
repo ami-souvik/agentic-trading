@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = Field(default="")
     s3_bucket_name: str = Field(default="nse-llm-trader-archive")
     dynamo_table_name: str = Field(default="nse_trader")
+    # Leave empty to use real AWS DynamoDB.
+    # Set to http://localhost:8001 when running outside Docker against the local container,
+    # or http://dynamodb-local:8000 when running inside the compose network.
+    dynamo_endpoint_url: str = Field(default="", description="DynamoDB endpoint override for local dev")
 
     # App behaviour
     paper_trading_mode: bool = Field(default=True)
@@ -65,6 +69,10 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO")
+    # Path to the rotating log file.  Relative to CWD (= /app inside the container).
+    # The docker-compose bind-mount makes ./logs/trader.log visible on the host.
+    # Set to "" to disable file logging (console only).
+    log_file: str = Field(default="logs/trader.log")
 
     # Dry-run (no DynamoDB writes, no fills)
     dry_run: bool = Field(default=False)

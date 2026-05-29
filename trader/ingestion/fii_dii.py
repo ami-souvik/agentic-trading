@@ -27,30 +27,60 @@ _EMPTY_FLOWS = {
 def _try_nselib(trade_date: date) -> dict | None:
     """
     Attempt to fetch FII/DII data via nselib.
-    Returns None on any failure so the caller can fall back.
+
+    fii_dii_trading_activity lives in capital_market_data.py but is NOT
+    re-exported from capital_market/__init__.py, so we import from the
+    submodule directly.  The function takes no arguments — it always fetches
+    today's live data from NSE.  Values are already in ₹ crore.
     """
     try:
-        from nselib import capital_market  # type: ignore
+        from nselib.capital_market.capital_market_data import (  # type: ignore
+            fii_dii_trading_activity,
+        )
 
-        date_str = trade_date.strftime("%d-%m-%Y")
-        df = capital_market.fii_dii_trading_activity(from_date=date_str, to_date=date_str)
+        df = fii_dii_trading_activity()  # no date args — live data only
 
         if df is None or df.empty:
             return None
 
-        # nselib column names vary; normalise common variants
-        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+        logger.debug("FII/DII nselib columns: %s", df.columns.tolist())
+
+        # Normalise column names for matching
+        df.columns = [str(c).strip() for c in df.columns]
+        col_lower = {c.lower().replace(" ", "_"): c for c in df.columns}
 
         fii_net = dii_net = 0.0
-        for col in df.columns:
-            if "fii" in col and "net" in col:
-                fii_net = float(df[col].iloc[-1])
-            if "dii" in col and "net" in col:
-                dii_net = float(df[col].iloc[-1])
 
+        # Layout A: flat columns like netFII / NET_FII / netDII / NET_DII
+        for key, orig in col_lower.items():
+            try:
+                val = float(df[orig].iloc[-1] or 0)
+            except Exception:
+                continue
+            if "fii" in key and "net" in key:
+                fii_net = val
+            elif "dii" in key and "net" in key:
+                dii_net = val
+
+        # Layout B: rows keyed by category column (FII/FPI | DII) with netValue
+        if fii_net == 0.0 and dii_net == 0.0 and "category" in col_lower:
+            cat_col = col_lower["category"]
+            net_col = next(
+                (col_lower[k] for k in col_lower if "net" in k and "value" in k), None
+            )
+            if net_col:
+                for _, row in df.iterrows():
+                    cat = str(row[cat_col]).upper()
+                    net = float(row.get(net_col) or 0)
+                    if "FII" in cat:
+                        fii_net = net
+                    elif "DII" in cat:
+                        dii_net = net
+
+        # NSE API already returns values in ₹ crore — no unit conversion needed
         return {
-            "fii_net_buy_cr": round(fii_net / 1e7, 2),  # nselib returns values in ₹; convert to crore
-            "dii_net_buy_cr": round(dii_net / 1e7, 2),
+            "fii_net_buy_cr": round(fii_net, 2),
+            "dii_net_buy_cr": round(dii_net, 2),
             "date": trade_date.isoformat(),
             "source": "nselib",
         }
